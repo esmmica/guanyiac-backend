@@ -1,7 +1,7 @@
 require('dotenv').config(); // Load environment variables from .env file
 
 const express = require('express');
-const mysql = require('mysql'); // We'll keep this but use createPool
+const mysql = require('mysql2'); // We'll keep this but use createPool
 const cors = require('cors');
 const bcrypt = require('bcrypt'); // Make sure you have installed bcrypt: npm install bcrypt
 const jwt = require('jsonwebtoken');
