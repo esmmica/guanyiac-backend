@@ -1,7 +1,7 @@
 require('dotenv').config(); // Load environment variables from .env file
 
 const express = require('express');
-const mysql = require('mysql2'); // We'll keep this but use createPool
+const { Pool } = require('pg'); // Replace mysql2 with pg
 const cors = require('cors');
 const bcrypt = require('bcrypt'); // Make sure you have installed bcrypt: npm install bcrypt
 const jwt = require('jsonwebtoken');
@@ -14,7 +14,16 @@ const app = express();
 const port = process.env.PORT || 3001; // Backend will run on port 3001 (or specified in .env)
 
 // Middleware
-app.use(cors()); // Allow requests from your React frontend
+app.use(cors({
+    origin: [
+        'http://localhost:3000',
+        'https://guanyiac-frontend-production.up.railway.app',
+        'https://guanyiac.vercel.app'
+    ],
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization']
+})); // Allow requests from your React frontend
 app.use(express.json()); // Parse JSON request bodies
 
 // NEW: Ensure 'uploads' directory exists
@@ -38,33 +47,23 @@ const upload = multer({ storage: storage });
 app.use('/uploads', express.static(uploadsDir)); // Use the dynamically created directory path
 
 // MODIFIED: Use MySQL Connection Pool instead of direct connection
-const pool = mysql.createPool({
-    connectionLimit: 10, // Adjust this limit based on your application's needs
-    host: process.env.DB_HOST,
-    user: process.env.DB_USER,
-    password: process.env.DB_PASSWORD,
-    database: process.env.DB_DATABASE,
-    port: process.env.DB_PORT || 3306 // Use port from .env or default
+const pool = new Pool({
+    connectionString: process.env.DATABASE_URL,
+    ssl: {
+        rejectUnauthorized: false
+    }
 });
 
 // Test the pool connection (optional, but good for startup check)
-pool.getConnection((err, connection) => {
+pool.query('SELECT NOW()', (err, result) => {
     if (err) {
-        console.error('Error connecting to MySQL pool:', err);
-        // Handle specific connection errors
-        if (err.code === 'PROTOCOL_CONNECTION_LOST') {
-            console.error('Database connection was closed unexpectedly.');
-        }
-        if (err.code === 'ER_CON_COUNT_ERROR') {
-            console.error('Database has too many connections.');
-        }
+        console.error('Error connecting to PostgreSQL:', err);
         if (err.code === 'ECONNREFUSED') {
             console.error('Database connection was refused. Check DB credentials or server status.');
         }
-        return; // Don't proceed if pool connection failed
+        return;
     }
-    console.log('Connected to MySQL database via pool');
-    connection.release(); // Release the test connection immediately
+    console.log('Connected to PostgreSQL database via pool');
 });
 
 // Secret key for JWT
@@ -95,7 +94,7 @@ function isAdmin(req, res, next) {
 
 // NEW: Function to update the 'is_new' status for products
 const updateNewProductStatus = () => {
-    pool.getConnection((err, connection) => {
+    pool.query('SELECT NOW()', (err, connection) => { // MODIFIED: use connection for queries
         if (err) {
             console.error('Error getting connection for updateNewProductStatus:', err);
             return;
@@ -145,11 +144,11 @@ app.post('/register', async (req, res) => {
     const { username, password } = req.body;
     try {
         const hashedPassword = await bcrypt.hash(password, 10);
-        const sql = 'INSERT INTO users (username, password) VALUES (?, ?)';
+        const sql = 'INSERT INTO users (username, password) VALUES ($1, $2)';
         // MODIFIED: Use pool for query
         pool.query(sql, [username, hashedPassword], (err, result) => {
             if (err) {
-                if (err.code === 'ER_DUP_ENTRY') {
+                if (err.code === '23505') { // ER_DUP_ENTRY
                     return res.status(409).send('Username already exists');
                 }
                 console.error('Error registering user:', err);
@@ -166,18 +165,18 @@ app.post('/register', async (req, res) => {
 // User login route
 app.post('/login', (req, res) => {
     const { username, password } = req.body;
-    const sql = 'SELECT id, username, password, role, first_name, last_name, email, contact_email FROM users WHERE username = ?';
+    const sql = 'SELECT id, username, password, role, first_name, last_name, email, contact_email FROM users WHERE username = $1';
     // MODIFIED: Use pool for query
     pool.query(sql, [username], async (err, results) => {
         if (err) {
             console.error('Error logging in:', err);
             return res.status(500).send('Error logging in');
         }
-        if (results.length === 0) {
+        if (results.rows.length === 0) {
             return res.status(400).send('Invalid username or password');
         }
 
-        const user = results[0];
+        const user = results.rows[0];
         const isMatch = await bcrypt.compare(password, user.password);
 
         if (!isMatch) {
@@ -221,7 +220,7 @@ app.get('/api/users', authenticateToken, (req, res) => {
             console.error('Error fetching users:', err);
             return res.status(500).send('Error fetching users');
         }
-        res.json(results);
+        res.json(results.rows);
     });
 });
 
@@ -229,14 +228,14 @@ app.get('/api/users', authenticateToken, (req, res) => {
 app.put('/api/users/:id/role', authenticateToken, (req, res) => {
     const userId = req.params.id;
     const { role } = req.body;
-    const sql = 'UPDATE users SET role = ? WHERE id = ?';
+    const sql = 'UPDATE users SET role = $1 WHERE id = $2';
     // MODIFIED: Use pool for query
     pool.query(sql, [role, userId], (err, result) => {
         if (err) {
             console.error('Error updating user role:', err);
             return res.status(500).send('Error updating user role');
         }
-        if (result.affectedRows === 0) {
+        if (result.rowCount === 0) {
             return res.status(404).send('User not found');
         }
         res.send('User role updated successfully');
@@ -246,14 +245,14 @@ app.put('/api/users/:id/role', authenticateToken, (req, res) => {
 // Delete user (protected route)
 app.delete('/api/users/:id', authenticateToken, (req, res) => {
     const userId = req.params.id;
-    const sql = 'DELETE FROM users WHERE id = ?';
+    const sql = 'DELETE FROM users WHERE id = $1';
     // MODIFIED: Use pool for query
     pool.query(sql, [userId], (err, result) => {
         if (err) {
             console.error('Error deleting user:', err);
             return res.status(500).send('Error deleting user');
         }
-        if (result.affectedRows === 0) {
+        if (result.rowCount === 0) {
             return res.status(404).send('User not found');
         }
         res.send('User deleted successfully');
@@ -263,17 +262,17 @@ app.delete('/api/users/:id', authenticateToken, (req, res) => {
 // Categories API
 app.post('/api/categories', (req, res) => {
     const { name } = req.body;
-    const sql = 'INSERT INTO categories (name) VALUES (?)';
+    const sql = 'INSERT INTO categories (name) VALUES ($1)';
     // MODIFIED: Use pool for query
     pool.query(sql, [name], (err, result) => {
         if (err) {
-            if (err.code === 'ER_DUP_ENTRY') {
+            if (err.code === '23505') { // ER_DUP_ENTRY
                 return res.status(409).send('Category with this name already exists.');
             }
             console.error('Error adding category:', err);
             return res.status(500).send('Error adding category');
         }
-        res.status(201).json({ id: result.insertId, name });
+        res.status(201).json({ id: result.rows[0].id, name });
     });
 });
 
@@ -303,7 +302,7 @@ app.get('/api/categories', (req, res) => {
 
         const categoriesMap = new Map();
 
-        results.forEach(row => {
+        results.rows.forEach(row => {
             if (!categoriesMap.has(row.category_id)) {
                 categoriesMap.set(row.category_id, {
                     id: row.category_id,
@@ -361,17 +360,17 @@ app.get('/api/categories', (req, res) => {
 app.put('/api/categories/:id', (req, res) => {
     const categoryId = req.params.id;
     const { name } = req.body;
-    const sql = 'UPDATE categories SET name = ? WHERE id = ?';
+    const sql = 'UPDATE categories SET name = $1 WHERE id = $2';
     // MODIFIED: Use pool for query
     pool.query(sql, [name, categoryId], (err, result) => {
         if (err) {
-            if (err.code === 'ER_DUP_ENTRY') {
+            if (err.code === '23505') { // ER_DUP_ENTRY
                 return res.status(409).send('Category with this name already exists.');
             }
             console.error('Error updating category:', err);
             return res.status(500).send('Error updating category');
         }
-        if (result.affectedRows === 0) {
+        if (result.rowCount === 0) {
             return res.status(404).send('Category not found');
         }
         res.send('Category updated successfully');
@@ -382,7 +381,7 @@ app.delete('/api/categories/:id', (req, res) => {
     const categoryId = req.params.id;
 
     // MODIFIED: Use pool.getConnection for transactions
-    pool.getConnection((err, connection) => {
+    pool.query('SELECT NOW()', (err, connection) => { // MODIFIED: use connection for queries
         if (err) {
             console.error('Error getting connection from pool:', err);
             return res.status(500).send('Database connection error');
@@ -395,7 +394,7 @@ app.delete('/api/categories/:id', (req, res) => {
                 return res.status(500).send('Internal server error');
             }
 
-            const deleteApplicationsSql = 'DELETE FROM applications WHERE category_id = ?';
+            const deleteApplicationsSql = 'DELETE FROM applications WHERE category_id = $1';
             connection.query(deleteApplicationsSql, [categoryId], (err, result) => {
                 if (err) {
                     return connection.rollback(() => {
@@ -405,7 +404,7 @@ app.delete('/api/categories/:id', (req, res) => {
                     });
                 }
 
-                const deleteCategorySql = 'DELETE FROM categories WHERE id = ?';
+                const deleteCategorySql = 'DELETE FROM categories WHERE id = $1';
                 connection.query(deleteCategorySql, [categoryId], (err, result) => {
                     if (err) {
                         return connection.rollback(() => {
@@ -414,7 +413,7 @@ app.delete('/api/categories/:id', (req, res) => {
                             res.status(500).send('Error deleting category');
                         });
                     }
-                    if (result.affectedRows === 0) {
+                    if (result.rowCount === 0) {
                         return connection.rollback(() => {
                             connection.release();
                             res.status(404).send('Category not found');
@@ -441,20 +440,20 @@ app.delete('/api/categories/:id', (req, res) => {
 // Applications (including sub-items) API
 app.post('/api/applications', (req, res) => {
   const { name, category_id, parent_id } = req.body;
-  const sql = 'INSERT INTO applications (name, category_id, parent_id) VALUES (?, ?, ?)';
+  const sql = 'INSERT INTO applications (name, category_id, parent_id) VALUES ($1, $2, $3)';
     // MODIFIED: Use pool for query
     pool.query(sql, [name, category_id, parent_id], (err, result) => {
     if (err) {
-      if (err.code === 'ER_DUP_ENTRY') {
+      if (err.code === '23505') { // ER_DUP_ENTRY
                 // Check if the duplicate entry is for the same parent_id
-                const checkSql = 'SELECT id FROM applications WHERE name = ? AND category_id = ? AND parent_id <=> ?';
+                const checkSql = 'SELECT id FROM applications WHERE name = $1 AND category_id = $2 AND parent_id = $3';
                 // MODIFIED: Use pool for checkSql query
                 pool.query(checkSql, [name, category_id, parent_id], (checkErr, checkResults) => {
                     if (checkErr) {
                         console.error('Error checking duplicate application:', checkErr);
                         return res.status(500).send('Error adding application');
                     }
-                    if (checkResults.length > 0) {
+                    if (checkResults.rows.length > 0) {
                         return res.status(409).send('An item with this name already exists in this category/parent.');
                     }
                     // If it's a duplicate but not for the specific parent, it's a different kind of error
@@ -466,24 +465,24 @@ app.post('/api/applications', (req, res) => {
             console.error('Error adding application:', err);
             return res.status(500).send('Error adding application');
         }
-        res.status(201).json({ id: result.insertId, name, category_id, parent_id });
+        res.status(201).json({ id: result.rows[0].id, name, category_id, parent_id });
   });
 });
 
 app.put('/api/applications/:id', (req, res) => {
     const appId = req.params.id;
   const { name } = req.body;
-  const sql = 'UPDATE applications SET name = ? WHERE id = ?';
+  const sql = 'UPDATE applications SET name = $1 WHERE id = $2';
     // MODIFIED: Use pool for query
     pool.query(sql, [name, appId], (err, result) => {
     if (err) {
-      if (err.code === 'ER_DUP_ENTRY') {
+      if (err.code === '23505') { // ER_DUP_ENTRY
                 return res.status(409).send('An item with this name already exists.');
        }
             console.error('Error updating application:', err);
             return res.status(500).send('Error updating application');
     }
-    if (result.affectedRows === 0) {
+    if (result.rowCount === 0) {
             return res.status(404).send('Application not found');
     }
         res.send('Application updated successfully');
@@ -494,7 +493,7 @@ app.delete('/api/applications/:id', (req, res) => {
     const appId = req.params.id;
 
     // MODIFIED: Use pool.getConnection for transactions
-    pool.getConnection((err, connection) => {
+    pool.query('SELECT NOW()', (err, connection) => { // MODIFIED: use connection for queries
     if (err) {
             console.error('Error getting connection from pool:', err);
             return res.status(500).send('Database connection error');
@@ -509,23 +508,23 @@ app.delete('/api/applications/:id', (req, res) => {
 
             // First, recursively delete any sub-items of this application
             const deleteSubItemsRecursively = (currentAppId, callback) => {
-                const selectSubItemsSql = 'SELECT id FROM applications WHERE parent_id = ?';
+                const selectSubItemsSql = 'SELECT id FROM applications WHERE parent_id = $1';
                 connection.query(selectSubItemsSql, [currentAppId], (err, subItems) => { // MODIFIED: use connection for queries
                     if (err) return callback(err);
 
-                    if (subItems.length === 0) {
+                    if (subItems.rows.length === 0) {
                         return callback(null); // No more sub-items
                     }
 
                     let completed = 0;
-                    subItems.forEach(subItem => {
+                    subItems.rows.forEach(subItem => {
                         deleteSubItemsRecursively(subItem.id, (err) => {
                             if (err) return callback(err);
-                            const deleteSql = 'DELETE FROM applications WHERE id = ?';
+                            const deleteSql = 'DELETE FROM applications WHERE id = $1';
                             connection.query(deleteSql, [subItem.id], (err) => { // MODIFIED: use connection for queries
                                 if (err) return callback(err);
                                 completed++;
-                                if (completed === subItems.length) {
+                                if (completed === subItems.rows.length) {
                                     callback(null);
                                 }
                             });
@@ -544,7 +543,7 @@ app.delete('/api/applications/:id', (req, res) => {
                 }
 
                 // After all sub-items are deleted, delete the application itself
-                const deleteAppSql = 'DELETE FROM applications WHERE id = ?';
+                const deleteAppSql = 'DELETE FROM applications WHERE id = $1';
                 connection.query(deleteAppSql, [appId], (err, result) => { // MODIFIED: use connection for queries
                     if (err) {
                         return connection.rollback(() => {
@@ -553,7 +552,7 @@ app.delete('/api/applications/:id', (req, res) => {
                             res.status(500).send('Error deleting application');
                         });
                     }
-                    if (result.affectedRows === 0) {
+                    if (result.rowCount === 0) {
                         return connection.rollback(() => {
                             connection.release();
                             res.status(404).send('Application not found');
@@ -594,7 +593,7 @@ app.post('/api/products', upload.single('image'), (req, res) => { // 'image' is 
         return res.status(400).send('Missing required product fields.');
     }
 
-    pool.getConnection((err, connection) => {
+    pool.query('SELECT NOW()', (err, connection) => { // MODIFIED: use connection for queries
         if (err) {
             console.error('Error getting connection from pool:', err);
             return res.status(500).send('Database connection error');
@@ -607,11 +606,11 @@ app.post('/api/products', upload.single('image'), (req, res) => { // 'image' is 
                 return res.status(500).send('Internal server error');
             }
 
-            const insertProductQuery = `INSERT INTO products (name, application_id, brand, temperature_range, material, image_url, description, is_new, product_features) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+            const insertProductQuery = `INSERT INTO products (name, application_id, brand, temperature_range, material, image_url, description, is_new, product_features) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`;
             // MODIFIED: Removed JSON.parse() here. product_features is already a JSON string.
             connection.query(insertProductQuery, [name, application_id, brand, temperature_range, material, image_url, description, is_new, product_features], (err, productResult) => {
                 if (err) {
-                    if (err.code === 'ER_DUP_ENTRY') {
+                    if (err.code === '23505') { // ER_DUP_ENTRY
                     return connection.rollback(() => {
                         connection.release();
                             res.status(409).send('Product with this name already exists.')
@@ -624,7 +623,7 @@ app.post('/api/products', upload.single('image'), (req, res) => { // 'image' is 
                     });
                 }
 
-                const productId = productResult.insertId;
+                const productId = productResult.rows[0].id;
                 const parsedSpecs = JSON.parse(specs); // Parse the stringified specs array
 
                 if (parsedSpecs.length === 0) {
@@ -640,7 +639,7 @@ app.post('/api/products', upload.single('image'), (req, res) => { // 'image' is 
                     });
                 }
 
-                const insertSpecQuery = `INSERT INTO product_specs (product_id, model_series, color, sap, nom_id, nom_od, max_wp, weight) VALUES ?`;
+                const insertSpecQuery = `INSERT INTO product_specs (product_id, model_series, color, sap, nom_id, nom_od, max_wp, weight) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`;
                 const specValues = parsedSpecs.map(spec => [
                     productId,
                     spec.model_series,
@@ -702,13 +701,13 @@ app.get('/api/products', (req, res) => {
 
     // 1. Filter by 'is_new' status
     if (is_new !== undefined) {
-        whereConditions.push(`p.is_new = ?`);
+        whereConditions.push(`p.is_new = $1`);
         queryParams.push(is_new === 'true' || is_new === '1' ? 1 : 0);
     }
 
     // 2. Filter by search term (product name or description)
     if (search) {
-        whereConditions.push(`(p.name LIKE ? OR p.description LIKE ?)`);
+        whereConditions.push(`(p.name LIKE $1 OR p.description LIKE $1)`);
         queryParams.push(`%${search}%`, `%${search}%`);
     }
 
@@ -716,7 +715,7 @@ app.get('/api/products', (req, res) => {
     if (application_ids) {
         const ids = application_ids.split(',').map(id => parseInt(id.trim())).filter(id => !isNaN(id));
         if (ids.length > 0) {
-            whereConditions.push(`p.application_id IN (?)`);
+            whereConditions.push(`p.application_id IN ($1)`);
             queryParams.push(ids);
         }
     }
@@ -738,7 +737,7 @@ app.get('/api/products', (req, res) => {
                             1
                         )
                     ) AS SIGNED
-                ) BETWEEN ? AND ?
+                ) BETWEEN $1 AND $2
             `);
             queryParams.push(minT, maxT);
         }
@@ -761,7 +760,7 @@ app.get('/api/products', (req, res) => {
                             1
                         )
                     ) AS DECIMAL(10,2)
-                ) BETWEEN ? AND ?
+                ) BETWEEN $1 AND $2
             )`);
             queryParams.push(minW, maxW);
         }
@@ -783,7 +782,7 @@ app.get('/api/products', (req, res) => {
                                 1
                             )
                         ) AS DECIMAL(10,2)
-                    ) BETWEEN ? AND ?
+                    ) BETWEEN $1 AND $2
                     OR
                     CAST(
                         TRIM(
@@ -793,7 +792,7 @@ app.get('/api/products', (req, res) => {
                                 1
                             )
                         ) AS DECIMAL(10,2)
-                    ) BETWEEN ? AND ?
+                    ) BETWEEN $3 AND $4
                 )
             )`);
             queryParams.push(minD, maxD, minD, maxD);
@@ -812,7 +811,7 @@ app.get('/api/products', (req, res) => {
                     TRIM(
                         SUBSTRING_INDEX(ps_p.max_wp, ' (', 1)
                     ) AS SIGNED
-                ) BETWEEN ? AND ?
+                ) BETWEEN $1 AND $2
             )`);
             queryParams.push(minP, maxP);
         }
@@ -841,7 +840,7 @@ app.get('/api/products', (req, res) => {
 
         const productsMap = new Map();
 
-        results.forEach(row => {
+        results.rows.forEach(row => {
             if (!productsMap.has(row.id)) {
                 // {{ NEW: Ensure product_features is parsed here for the /api/products route }}
                 let parsedProductFeatures = [];
@@ -918,7 +917,7 @@ app.put('/api/products/:id', upload.single('image'), (req, res) => { // 'image' 
         return res.status(400).send('Missing required product fields.');
     }
 
-    pool.getConnection((err, connection) => {
+    pool.query('SELECT NOW()', (err, connection) => { // MODIFIED: use connection for queries
         if (err) {
             console.error('Error getting connection from pool:', err);
             return res.status(500).send('Database connection error');
@@ -931,10 +930,10 @@ app.put('/api/products/:id', upload.single('image'), (req, res) => { // 'image' 
                 return res.status(500).send('Internal server error');
             }
 
-            const updateProductQuery = `UPDATE products SET name = ?, application_id = ?, brand = ?, temperature_range = ?, material = ?, image_url = ?, description = ?, is_new = ?, product_features = ? WHERE id = ?`;
+            const updateProductQuery = `UPDATE products SET name = $1, application_id = $2, brand = $3, temperature_range = $4, material = $5, image_url = $6, description = $7, is_new = $8, product_features = $9 WHERE id = $10`;
             connection.query(updateProductQuery, [name, application_id, brand, temperature_range, material, image_url, description, is_new, product_features, productId], (err, productResult) => {
                 if (err) {
-                    if (err.code === 'ER_DUP_ENTRY') {
+                    if (err.code === '23505') { // ER_DUP_ENTRY
                     return connection.rollback(() => {
                         connection.release();
                             res.status(409).send('Product with this name already exists.')
@@ -948,7 +947,7 @@ app.put('/api/products/:id', upload.single('image'), (req, res) => { // 'image' 
                 }
 
                 // Delete existing specs for this product before inserting new ones
-                const deleteSpecsQuery = `DELETE FROM product_specs WHERE product_id = ?`;
+                const deleteSpecsQuery = `DELETE FROM product_specs WHERE product_id = $1`;
                 connection.query(deleteSpecsQuery, [productId], (err) => {
                     if (err) {
                         console.error('Error deleting existing product specs:', err);
@@ -973,7 +972,7 @@ app.put('/api/products/:id', upload.single('image'), (req, res) => { // 'image' 
                         });
                     }
 
-                    const insertSpecQuery = `INSERT INTO product_specs (product_id, model_series, color, sap, nom_id, nom_od, max_wp, weight) VALUES ?`;
+                    const insertSpecQuery = `INSERT INTO product_specs (product_id, model_series, color, sap, nom_id, nom_od, max_wp, weight) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`;
                     const specValues = parsedSpecs.map(spec => [
                         productId,
                         spec.model_series,
@@ -1014,7 +1013,7 @@ app.delete('/api/products/:id', (req, res) => {
     const productId = req.params.id;
 
     // MODIFIED: Use pool.getConnection for transactions
-    pool.getConnection((err, connection) => {
+    pool.query('SELECT NOW()', (err, connection) => { // MODIFIED: use connection for queries
         if (err) {
             console.error('Error getting connection from pool:', err);
             return res.status(500).send('Database connection error');
@@ -1028,7 +1027,7 @@ app.delete('/api/products/:id', (req, res) => {
             }
 
             // Delete associated product specs first
-            const deleteSpecsSql = 'DELETE FROM product_specs WHERE product_id = ?';
+            const deleteSpecsSql = 'DELETE FROM product_specs WHERE product_id = $1';
             connection.query(deleteSpecsSql, [productId], (err, specResult) => {
                 if (err) {
                                 return connection.rollback(() => {
@@ -1039,7 +1038,7 @@ app.delete('/api/products/:id', (req, res) => {
                 }
 
                 // Then delete the product itself
-                const deleteProductSql = 'DELETE FROM products WHERE id = ?';
+                const deleteProductSql = 'DELETE FROM products WHERE id = $1';
                 connection.query(deleteProductSql, [productId], (err, productResult) => {
                     if (err) {
                         return connection.rollback(() => {
@@ -1048,7 +1047,7 @@ app.delete('/api/products/:id', (req, res) => {
                             res.status(500).send('Error deleting product');
                         });
                     }
-                    if (productResult.affectedRows === 0) {
+                    if (productResult.rowCount === 0) {
                         return connection.rollback(() => {
                             connection.release();
                             res.status(404).send('Product not found');
@@ -1076,27 +1075,27 @@ app.delete('/api/products/:id', (req, res) => {
 app.get('/api/products/:productId', (req, res) => {
     const productId = req.params.productId;
 
-    pool.getConnection((err, connection) => {
+    pool.query('SELECT NOW()', (err, connection) => { // MODIFIED: use connection for queries
         if (err) {
             console.error('Error getting database connection:', err);
             return res.status(500).send('Database connection error');
         }
 
-        const productSql = 'SELECT *, product_features FROM products WHERE id = ?';
-        const specsSql = 'SELECT * FROM product_specs WHERE product_id = ? ORDER BY id ASC';
+        const productSql = 'SELECT *, product_features FROM products WHERE id = $1';
+        const specsSql = 'SELECT * FROM product_specs WHERE product_id = $1 ORDER BY id ASC';
 
         // Use Promise.all to fetch product and specs concurrently
         Promise.all([
             new Promise((resolve, reject) => {
                 connection.query(productSql, [productId], (err, productResults) => {
                     if (err) return reject(err);
-                    resolve(productResults[0]);
+                    resolve(productResults.rows[0]);
                 });
             }),
             new Promise((resolve, reject) => {
                 connection.query(specsSql, [productId], (err, specsResults) => {
                     if (err) return reject(err);
-                    resolve(specsResults);
+                    resolve(specsResults.rows);
                 });
             })
         ])
@@ -1150,7 +1149,7 @@ app.post('/api/inquiries', (req, res) => {
       : (customer_name || '');
     const inquiryItemsJson = JSON.stringify(inquiry_items);
 
-    const sql = 'INSERT INTO inquiries (customer_name, customer_email, customer_message, inquiry_items, is_read) VALUES (?, ?, ?, ?, ?)';
+    const sql = 'INSERT INTO inquiries (customer_name, customer_email, customer_message, inquiry_items, is_read) VALUES ($1, $2, $3, $4, $5)';
     pool.query(sql, [finalCustomerName, customer_email, customer_message, inquiryItemsJson, 0], (err, result) => {
         if (err) {
             console.error('Error submitting inquiry:', err);
@@ -1171,7 +1170,7 @@ app.get('/api/inquiries', authenticateToken, (req, res) => {
         }
 
         // Parse the JSON string back into an object/array for each inquiry_items field
-        const inquiriesWithParsedItems = results.map(inquiry => {
+        const inquiriesWithParsedItems = results.rows.map(inquiry => {
             let parsedItems = [];
             try {
                 parsedItems = inquiry.inquiry_items ? JSON.parse(inquiry.inquiry_items) : [];
@@ -1193,13 +1192,13 @@ app.get('/api/inquiries', authenticateToken, (req, res) => {
 // {{ NEW: Route to mark an inquiry as read }}
 app.put('/api/inquiries/:id/read', authenticateToken, (req, res) => {
     const inquiryId = req.params.id;
-    const sql = 'UPDATE inquiries SET is_read = 1 WHERE id = ?';
-    pool.query(sql, [inquiryId], (err, result) => {
+    const sql = 'UPDATE inquiries SET is_read = $1 WHERE id = $2';
+    pool.query(sql, [1, inquiryId], (err, result) => {
         if (err) {
             console.error('Error marking inquiry as read:', err);
             return res.status(500).send('Error marking inquiry as read');
         }
-        if (result.affectedRows === 0) {
+        if (result.rowCount === 0) {
             return res.status(404).send('Inquiry not found');
         }
         res.send('Inquiry marked as read successfully');
@@ -1296,14 +1295,14 @@ app.post('/api/admin/users/confirm-add', authenticateToken, isAdmin, async (req,
     try {
         const hashedPassword = await bcrypt.hash(new_password, 10);
         // {{ MODIFIED: Insert new user with username (for login) and contact_email }}
-        const sql = 'INSERT INTO users (username, password, first_name, last_name, role, email, contact_email) VALUES (?, ?, ?, ?, ?, ?, ?)';
+        const sql = 'INSERT INTO users (username, password, first_name, last_name, role, email, contact_email) VALUES ($1, $2, $3, $4, $5, $6, $7)';
         // NOTE: The 'email' column will be NULL for new users by default with this INSERT,
         // unless you add new_email to pendingUserData and pass it here.
         // For simplicity, I'm assuming 'username' is the primary login and 'contact_email' is the separate contact email.
         // If the 'email' column should also contain the new user's contact email, you need to revisit the DB schema and frontend.
         pool.query(sql, [new_username, hashedPassword, new_first_name, new_last_name, new_role, null, new_contact_email], (err, result) => {
             if (err) {
-                if (err.code === 'ER_DUP_ENTRY') {
+                if (err.code === '23505') { // ER_DUP_ENTRY
                     // This could be a duplicate username OR email.
                     verificationCodes.delete(adminId);
                     return res.status(409).send('Username or Email already exists.');
@@ -1358,7 +1357,7 @@ app.post('/api/auth/reset-password', async (req, res) => {
     // Update the admin's password (assuming username is 'admin' or similar)
     // You may need to adjust this query to match your admin's username or id
     const hashed = await bcrypt.hash(newPassword, 10);
-    pool.query('UPDATE users SET password = ? WHERE email = ?', [hashed, adminEmail], (err) => {
+    pool.query('UPDATE users SET password = $1 WHERE email = $2', [hashed, adminEmail], (err) => {
         if (err) return res.status(500).send('Failed to reset password.');
         passwordResetCodes.delete(adminEmail);
         res.send('Password reset successful!');
@@ -1373,10 +1372,10 @@ app.get('/api/contact-info', (req, res) => {
             console.error('Error fetching contact info:', err);
             return res.status(500).json({ error: 'Failed to fetch contact info.' });
         }
-        if (results.length === 0) {
+        if (results.rows.length === 0) {
             return res.status(404).json({ error: 'No contact info found.' });
         }
-        let data = results[0].data;
+        let data = results.rows[0].data;
         if (typeof data === 'string') {
             try { data = JSON.parse(data); } catch (e) {}
         }
@@ -1387,7 +1386,7 @@ app.get('/api/contact-info', (req, res) => {
 // PUT contact info (admin only)
 app.put('/api/contact-info', authenticateToken, isAdmin, (req, res) => {
     const newData = req.body;
-    const sql = 'UPDATE contact_info SET data = ? WHERE id = 1';
+    const sql = 'UPDATE contact_info SET data = $1 WHERE id = 1';
     pool.query(sql, [JSON.stringify(newData)], (err, result) => {
         if (err) {
             console.error('Error updating contact info:', err);
@@ -1407,7 +1406,7 @@ app.get('/api/brand-partners', (req, res) => {
             console.error('Error fetching brand partners:', err);
             return res.status(500).send('Error fetching brand partners');
         }
-        res.json(results);
+        res.json(results.rows);
     });
 });
 
@@ -1421,26 +1420,26 @@ app.post('/api/brand-partners', authenticateToken, isAdmin, upload.single('image
     if (!name || !finalImageUrl) {
         return res.status(400).send('Name and image are required.');
     }
-    const sql = 'INSERT INTO brand_partners (name, image_url) VALUES (?, ?)';
+    const sql = 'INSERT INTO brand_partners (name, image_url) VALUES ($1, $2)';
     pool.query(sql, [name, finalImageUrl], (err, result) => {
         if (err) {
             console.error('Error adding brand partner:', err);
             return res.status(500).send('Error adding brand partner');
         }
-        res.status(201).json({ id: result.insertId, name, image_url: finalImageUrl });
+        res.status(201).json({ id: result.rows[0].id, name, image_url: finalImageUrl });
     });
 });
 
 // Delete a brand partner (admin only)
 app.delete('/api/brand-partners/:id', authenticateToken, isAdmin, (req, res) => {
     const id = req.params.id;
-    const sql = 'DELETE FROM brand_partners WHERE id = ?';
+    const sql = 'DELETE FROM brand_partners WHERE id = $1';
     pool.query(sql, [id], (err, result) => {
         if (err) {
             console.error('Error deleting brand partner:', err);
             return res.status(500).send('Error deleting brand partner');
         }
-        if (result.affectedRows === 0) {
+        if (result.rowCount === 0) {
             return res.status(404).send('Brand partner not found');
         }
         res.send('Brand partner deleted successfully');
@@ -1454,7 +1453,7 @@ app.listen(port, () => {
 
 app.post('/api/contact-submissions', (req, res) => {
   const { subject, request, first_name, last_name, email, phone } = req.body;
-  const sql = 'INSERT INTO contact_submissions (subject, request, first_name, last_name, email, phone) VALUES (?, ?, ?, ?, ?, ?)';
+  const sql = 'INSERT INTO contact_submissions (subject, request, first_name, last_name, email, phone) VALUES ($1, $2, $3, $4, $5, $6)';
   pool.query(sql, [subject, request, first_name, last_name, email, phone], (err, result) => {
     if (err) return res.status(500).json({ success: false, error: 'Error saving submission' });
     res.status(201).json({ success: true });
@@ -1464,13 +1463,13 @@ app.post('/api/contact-submissions', (req, res) => {
 app.get('/api/contact-submissions', (req, res) => {
   pool.query('SELECT * FROM contact_submissions ORDER BY created_at DESC', (err, results) => {
     if (err) return res.status(500).send('Error fetching submissions');
-    res.json(results);
+    res.json(results.rows);
   });
 });
 
 app.delete('/api/contact-submissions/:id', (req, res) => {
   const id = req.params.id;
-  pool.query('DELETE FROM contact_submissions WHERE id = ?', [id], (err, result) => {
+  pool.query('DELETE FROM contact_submissions WHERE id = $1', [id], (err, result) => {
     if (err) return res.status(500).json({ success: false, error: 'Error deleting submission' });
     res.json({ success: true });
   });
@@ -1479,13 +1478,13 @@ app.delete('/api/contact-submissions/:id', (req, res) => {
 // Delete an inquiry by ID (admin only)
 app.delete('/api/inquiries/:id', authenticateToken, (req, res) => {
     const inquiryId = req.params.id;
-    const sql = 'DELETE FROM inquiries WHERE id = ?';
+    const sql = 'DELETE FROM inquiries WHERE id = $1';
     pool.query(sql, [inquiryId], (err, result) => {
         if (err) {
             console.error('Error deleting inquiry:', err);
             return res.status(500).send('Error deleting inquiry');
         }
-        if (result.affectedRows === 0) {
+        if (result.rowCount === 0) {
             return res.status(404).send('Inquiry not found');
         }
         res.send('Inquiry deleted successfully');
