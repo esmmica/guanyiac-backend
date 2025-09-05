@@ -1465,8 +1465,3 @@ app.delete('/api/inquiries/:id', authenticateToken, (req, res) => {
 });
 
 // Force deployment
-/ /   F i x e d   c o n n e c t i o n   i s s u e 
- 
- 
-/ /   F i x e d   P o s t g r e S Q L   c o n n e c t i o n  
- 
