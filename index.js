@@ -55,7 +55,7 @@ const pool = new Pool({
 });
 
 // Test the pool connection (optional, but good for startup check)
-pool.query('SELECT NOW()', (err, result) => {
+pool.getConnection((err, connection) => {
     if (err) {
         console.error('Error connecting to PostgreSQL:', err);
         if (err.code === 'ECONNREFUSED') {
@@ -379,7 +379,7 @@ app.delete('/api/categories/:id', (req, res) => {
     const categoryId = req.params.id;
 
     // MODIFIED: Use pool.getConnection for transactions
-    pool.query('SELECT NOW()', (err, connection) => { // MODIFIED: use connection for queries
+    pool.getConnection((err, connection) => { // MODIFIED: use connection for queries
         if (err) {
             console.error('Error getting connection from pool:', err);
             return res.status(500).send('Database connection error');
@@ -491,7 +491,7 @@ app.delete('/api/applications/:id', (req, res) => {
     const appId = req.params.id;
 
     // MODIFIED: Use pool.getConnection for transactions
-    pool.query('SELECT NOW()', (err, connection) => { // MODIFIED: use connection for queries
+    pool.getConnection((err, connection) => { // MODIFIED: use connection for queries
     if (err) {
             console.error('Error getting connection from pool:', err);
             return res.status(500).send('Database connection error');
@@ -591,7 +591,7 @@ app.post('/api/products', upload.single('image'), (req, res) => { // 'image' is 
         return res.status(400).send('Missing required product fields.');
     }
 
-    pool.query('SELECT NOW()', (err, connection) => { // MODIFIED: use connection for queries
+    pool.getConnection((err, connection) => { // MODIFIED: use connection for queries
         if (err) {
             console.error('Error getting connection from pool:', err);
             return res.status(500).send('Database connection error');
@@ -915,7 +915,7 @@ app.put('/api/products/:id', upload.single('image'), (req, res) => { // 'image' 
         return res.status(400).send('Missing required product fields.');
     }
 
-    pool.query('SELECT NOW()', (err, connection) => { // MODIFIED: use connection for queries
+    pool.getConnection((err, connection) => { // MODIFIED: use connection for queries
         if (err) {
             console.error('Error getting connection from pool:', err);
             return res.status(500).send('Database connection error');
@@ -1011,7 +1011,7 @@ app.delete('/api/products/:id', (req, res) => {
     const productId = req.params.id;
 
     // MODIFIED: Use pool.getConnection for transactions
-    pool.query('SELECT NOW()', (err, connection) => { // MODIFIED: use connection for queries
+    pool.getConnection((err, connection) => { // MODIFIED: use connection for queries
         if (err) {
             console.error('Error getting connection from pool:', err);
             return res.status(500).send('Database connection error');
@@ -1073,7 +1073,7 @@ app.delete('/api/products/:id', (req, res) => {
 app.get('/api/products/:productId', (req, res) => {
     const productId = req.params.productId;
 
-    pool.query('SELECT NOW()', (err, connection) => { // MODIFIED: use connection for queries
+    pool.getConnection((err, connection) => { // MODIFIED: use connection for queries
         if (err) {
             console.error('Error getting database connection:', err);
             return res.status(500).send('Database connection error');
