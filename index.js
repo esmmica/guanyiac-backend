@@ -1488,3 +1488,5 @@ app.delete('/api/inquiries/:id', authenticateToken, (req, res) => {
         res.send('Inquiry deleted successfully');
     });
 });
+
+// Force deployment
