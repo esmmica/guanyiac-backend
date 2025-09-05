@@ -1098,7 +1098,9 @@ app.get('/api/products/:productId', (req, res) => {
             })
         ])
         .then(([product, specs]) => {
-            connection.release();
+            if (connection && typeof connection.release === 'function') {
+                connection.release();
+            }
 
             if (!product) {
                 return res.status(404).send('Product not found');
@@ -1124,7 +1126,9 @@ app.get('/api/products/:productId', (req, res) => {
             res.json(product);
         })
         .catch(queryErr => {
-            connection.release();
+            if (connection && typeof connection.release === 'function') {
+                connection.release();
+            }
             console.error('Error fetching product details or specs:', queryErr);
             res.status(500).send('Error fetching product details');
         });
