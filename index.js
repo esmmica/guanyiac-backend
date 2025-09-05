@@ -349,59 +349,24 @@ app.put('/api/categories/:id', (req, res) => {
 app.delete('/api/categories/:id', (req, res) => {
     const categoryId = req.params.id;
 
-    // MODIFIED: Use pool.getConnection for transactions
-    pool.query('SELECT NOW()', (err, connection) => { // MODIFIED: use connection for queries
+    // Delete associated applications first
+    const deleteApplicationsSql = 'DELETE FROM applications WHERE category_id = $1';
+    pool.query(deleteApplicationsSql, [categoryId], (err, result) => {
         if (err) {
-            console.error('Error getting connection from pool:', err);
-            return res.status(500).send('Database connection error');
+            console.error('Error deleting applications:', err);
+            return res.status(500).send('Error deleting associated applications');
         }
 
-        connection.beginTransaction(err => {
+        const deleteCategorySql = 'DELETE FROM categories WHERE id = $1';
+        pool.query(deleteCategorySql, [categoryId], (err, result) => {
             if (err) {
-                
-                console.error('Error starting transaction:', err);
-                return res.status(500).send('Internal server error');
+                console.error('Error deleting category:', err);
+                return res.status(500).send('Error deleting category');
             }
-
-            const deleteApplicationsSql = 'DELETE FROM applications WHERE category_id = $1';
-            connection.query(deleteApplicationsSql, [categoryId], (err, result) => {
-                if (err) {
-                    return connection.rollback(() => {
-                        
-                        console.error('Error deleting applications:', err);
-                        res.status(500).send('Error deleting associated applications');
-                    });
-                }
-
-                const deleteCategorySql = 'DELETE FROM categories WHERE id = $1';
-                connection.query(deleteCategorySql, [categoryId], (err, result) => {
-                    if (err) {
-                        return connection.rollback(() => {
-                            
-                            console.error('Error deleting category:', err);
-                            res.status(500).send('Error deleting category');
-                        });
-                    }
-                    if (result.rowCount === 0) {
-                        return connection.rollback(() => {
-                            
-                            res.status(404).send('Category not found');
-                        });
-                    }
-
-                    connection.commit(err => {
-                        if (err) {
-                            return connection.rollback(() => {
-                                
-                                console.error('Error committing transaction:', err);
-                                res.status(500).send('Internal server error');
-                            });
-                        }
-                         // Release the connection back to the pool
-                        res.send('Category and associated applications deleted successfully');
-                    });
-                });
-            });
+            if (result.rowCount === 0) {
+                return res.status(404).send('Category not found');
+            }
+            res.send('Category and associated applications deleted successfully');
         });
     });
 });
@@ -981,74 +946,37 @@ app.put('/api/products/:id', upload.single('image'), (req, res) => { // 'image' 
 app.delete('/api/products/:id', (req, res) => {
     const productId = req.params.id;
 
-    // MODIFIED: Use pool.getConnection for transactions
-    pool.query('SELECT NOW()', (err, connection) => { // MODIFIED: use connection for queries
+    // Delete associated product specs first
+    const deleteSpecsSql = 'DELETE FROM product_specs WHERE product_id = $1';
+    pool.query(deleteSpecsSql, [productId], (err, specResult) => {
         if (err) {
-            console.error('Error getting connection from pool:', err);
-            return res.status(500).send('Database connection error');
+            console.error('Error deleting product specs:', err);
+            return res.status(500).send('Error deleting associated specifications');
         }
 
-        connection.beginTransaction(err => {
+        // Then delete the product itself
+        const deleteProductSql = 'DELETE FROM products WHERE id = $1';
+        pool.query(deleteProductSql, [productId], (err, productResult) => {
             if (err) {
-                
-                console.error('Error starting transaction:', err);
-                return res.status(500).send('Internal server error');
+                console.error('Error deleting product:', err);
+                return res.status(500).send('Error deleting product');
+            }
+            if (productResult.rowCount === 0) {
+                return res.status(404).send('Product not found');
             }
 
-            // Delete associated product specs first
-            const deleteSpecsSql = 'DELETE FROM product_specs WHERE product_id = $1';
-            connection.query(deleteSpecsSql, [productId], (err, specResult) => {
-                if (err) {
-                                return connection.rollback(() => {
-                                    
-                        console.error('Error deleting product specs:', err);
-                        res.status(500).send('Error deleting associated specifications');
-                    });
-                }
-
-                // Then delete the product itself
-                const deleteProductSql = 'DELETE FROM products WHERE id = $1';
-                connection.query(deleteProductSql, [productId], (err, productResult) => {
-                    if (err) {
-                        return connection.rollback(() => {
-                            
-                            console.error('Error deleting product:', err);
-                            res.status(500).send('Error deleting product');
-                        });
-                    }
-                    if (productResult.rowCount === 0) {
-                        return connection.rollback(() => {
-                            
-                            res.status(404).send('Product not found');
-                        });
-                    }
-
-                    connection.commit(err => {
-                        if (err) {
-                            return connection.rollback(() => {
-                                
-                                console.error('Error committing transaction:', err);
-                                res.status(500).send('Internal server error');
-                            });
-                        }
-                         // Release the connection back to the pool
-                        res.send('Product and its specifications deleted successfully');
-                    });
-                });
-            });
+            res.send('Product and its specifications deleted successfully');
         });
     });
 });
 
-// MODIFIED: Get product by ID (for ProductDetailPage) to include product_features
-// MODIFIED: Get product by ID (for ProductDetailPage) to include product_features
+// Get product by ID (for ProductDetailPage) to include product_features
 app.get('/api/products/:productId', (req, res) => {
     const productId = req.params.productId;
 
     const productSql = 'SELECT *, product_features FROM products WHERE id = $1';
     const specsSql = 'SELECT * FROM product_specs WHERE product_id = $1 ORDER BY id ASC';
 
-    // Use Promise.all to fetch product and specs concurrently
     Promise.all([
         new Promise((resolve, reject) => {
             pool.query(productSql, [productId], (err, productResults) => {
@@ -1068,21 +996,18 @@ app.get('/api/products/:productId', (req, res) => {
             return res.status(404).send('Product not found');
         }
 
-        // Ensure product_features is parsed if it's coming as a string
         if (typeof product.product_features === 'string') {
             try {
                 product.product_features = JSON.parse(product.product_features);
             } catch (e) {
                 console.error('Error parsing product_features JSON:', e);
-                product.product_features = []; // Default to empty array on parse error
+                product.product_features = [];
             }
         } else if (!product.product_features) {
-            product.product_features = []; // Ensure it's an array even if null
+            product.product_features = [];
         }
 
-        // Attach specs to the product object
         product.product_specs = specs;
-
         res.json(product);
     })
     .catch(queryErr => {
