@@ -1374,4 +1374,4 @@ app.delete('/api/inquiries/:id', authenticateToken, (req, res) => {
     });
 });
 
-// Force deployment
+   // Deployment trigger
