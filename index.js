@@ -358,7 +358,7 @@ app.delete('/api/categories/:id', (req, res) => {
 
         connection.beginTransaction(err => {
             if (err) {
-                connection.release();
+                
                 console.error('Error starting transaction:', err);
                 return res.status(500).send('Internal server error');
             }
@@ -367,7 +367,7 @@ app.delete('/api/categories/:id', (req, res) => {
             connection.query(deleteApplicationsSql, [categoryId], (err, result) => {
                 if (err) {
                     return connection.rollback(() => {
-                        connection.release();
+                        
                         console.error('Error deleting applications:', err);
                         res.status(500).send('Error deleting associated applications');
                     });
@@ -377,14 +377,14 @@ app.delete('/api/categories/:id', (req, res) => {
                 connection.query(deleteCategorySql, [categoryId], (err, result) => {
                     if (err) {
                         return connection.rollback(() => {
-                            connection.release();
+                            
                             console.error('Error deleting category:', err);
                             res.status(500).send('Error deleting category');
                         });
                     }
                     if (result.rowCount === 0) {
                         return connection.rollback(() => {
-                            connection.release();
+                            
                             res.status(404).send('Category not found');
                         });
                     }
@@ -392,12 +392,12 @@ app.delete('/api/categories/:id', (req, res) => {
                     connection.commit(err => {
                         if (err) {
                             return connection.rollback(() => {
-                                connection.release();
+                                
                                 console.error('Error committing transaction:', err);
                                 res.status(500).send('Internal server error');
                             });
                         }
-                        connection.release(); // Release the connection back to the pool
+                         // Release the connection back to the pool
                         res.send('Category and associated applications deleted successfully');
                     });
                 });
@@ -470,7 +470,7 @@ app.delete('/api/applications/:id', (req, res) => {
 
         connection.beginTransaction(err => {
     if (err) {
-                connection.release();
+                
                 console.error('Error starting transaction for app delete:', err);
                 return res.status(500).send('Internal server error');
             }
@@ -505,7 +505,7 @@ app.delete('/api/applications/:id', (req, res) => {
             deleteSubItemsRecursively(appId, (err) => {
                 if (err) {
                     return connection.rollback(() => {
-                        connection.release();
+                        
                         console.error('Error deleting sub-items recursively:', err);
                         res.status(500).send('Error deleting associated sub-items');
                     });
@@ -516,14 +516,14 @@ app.delete('/api/applications/:id', (req, res) => {
                 connection.query(deleteAppSql, [appId], (err, result) => { // MODIFIED: use connection for queries
                     if (err) {
                         return connection.rollback(() => {
-                            connection.release();
+                            
                             console.error('Error deleting application:', err);
                             res.status(500).send('Error deleting application');
                         });
                     }
                     if (result.rowCount === 0) {
                         return connection.rollback(() => {
-                            connection.release();
+                            
                             res.status(404).send('Application not found');
                         });
                     }
@@ -531,12 +531,12 @@ app.delete('/api/applications/:id', (req, res) => {
                     connection.commit(err => {
                         if (err) {
                             return connection.rollback(() => {
-                                connection.release();
+                                
                                 console.error('Error committing transaction:', err);
                                 res.status(500).send('Internal server error');
                             });
                         }
-                        connection.release(); // Release the connection back to the pool
+                         // Release the connection back to the pool
                         res.send('Application and all its sub-items deleted successfully');
                     });
                 });
@@ -570,7 +570,7 @@ app.post('/api/products', upload.single('image'), (req, res) => { // 'image' is 
 
         connection.beginTransaction(err => {
             if (err) {
-                connection.release();
+                
                 console.error('Error starting transaction:', err);
                 return res.status(500).send('Internal server error');
             }
@@ -581,13 +581,13 @@ app.post('/api/products', upload.single('image'), (req, res) => { // 'image' is 
                 if (err) {
                     if (err.code === '23505') { // ER_DUP_ENTRY
                     return connection.rollback(() => {
-                        connection.release();
+                        
                             res.status(409).send('Product with this name already exists.')
                         });
                     }
                     console.error('Error adding product:', err);
                     return connection.rollback(() => {
-                        connection.release();
+                        
                         res.status(500).send('Error adding product')
                     });
                 }
@@ -599,11 +599,11 @@ app.post('/api/products', upload.single('image'), (req, res) => { // 'image' is 
                     return connection.commit(err => {
                         if (err) {
                             return connection.rollback(() => {
-                                connection.release();
+                                
                                 res.status(500).send('Internal server error')
                             });
                         }
-                        connection.release(); // Release the connection back to the pool
+                         // Release the connection back to the pool
                         res.status(201).json({ id: productId, message: 'Product added successfully with no specs.' });
                     });
                 }
@@ -624,18 +624,18 @@ app.post('/api/products', upload.single('image'), (req, res) => { // 'image' is 
                     if (err) {
                         console.error('Error adding product specs:', err);
                                 return connection.rollback(() => {
-                                    connection.release();
+                                    
                             res.status(500).send('Error adding product specifications')
                                 });
                             }
                     connection.commit(err => {
                         if (err) {
                             return connection.rollback(() => {
-                            connection.release();
+                            
                                 res.status(500).send('Internal server error')
                             });
                         }
-                        connection.release(); // Release the connection back to the pool
+                         // Release the connection back to the pool
                         res.status(201).json({ id: productId, message: 'Product added successfully with specs.' });
                     });
                     });
@@ -894,7 +894,7 @@ app.put('/api/products/:id', upload.single('image'), (req, res) => { // 'image' 
 
         connection.beginTransaction(err => {
             if (err) {
-                connection.release();
+                
                 console.error('Error starting transaction:', err);
                 return res.status(500).send('Internal server error');
             }
@@ -904,13 +904,13 @@ app.put('/api/products/:id', upload.single('image'), (req, res) => { // 'image' 
                 if (err) {
                     if (err.code === '23505') { // ER_DUP_ENTRY
                     return connection.rollback(() => {
-                        connection.release();
+                        
                             res.status(409).send('Product with this name already exists.')
                         });
                     }
                     console.error('Error updating product:', err);
                         return connection.rollback(() => {
-                            connection.release();
+                            
                         res.status(500).send('Error updating product')
                     });
                 }
@@ -921,7 +921,7 @@ app.put('/api/products/:id', upload.single('image'), (req, res) => { // 'image' 
                     if (err) {
                         console.error('Error deleting existing product specs:', err);
                                 return connection.rollback(() => {
-                         connection.release();
+                         
                             res.status(500).send('Error updating product specifications')
                         });
                     }
@@ -932,11 +932,11 @@ app.put('/api/products/:id', upload.single('image'), (req, res) => { // 'image' 
                         return connection.commit(err => {
                             if (err) {
                         return connection.rollback(() => {
-                            connection.release();
+                            
                                     res.status(500).send('Internal server error')
                                 });
                             }
-                            connection.release(); // Release the connection back to the pool
+                             // Release the connection back to the pool
                             res.send('Product updated successfully with no specs.');
                         });
                     }
@@ -957,18 +957,18 @@ app.put('/api/products/:id', upload.single('image'), (req, res) => { // 'image' 
                         if (err) {
                             console.error('Error inserting new product specs:', err);
                                 return connection.rollback(() => {
-                                    connection.release();
+                                    
                                 res.status(500).send('Error updating product specifications')
                                 });
                             }
                         connection.commit(err => {
                             if (err) {
                                     return connection.rollback(() => {
-                                        connection.release();
+                                        
                                     res.status(500).send('Internal server error')
                         });
                     }
-                            connection.release(); // Release the connection back to the pool
+                             // Release the connection back to the pool
                             res.send('Product updated successfully with specs.');
                         });
                         });
@@ -990,7 +990,7 @@ app.delete('/api/products/:id', (req, res) => {
 
         connection.beginTransaction(err => {
             if (err) {
-                connection.release();
+                
                 console.error('Error starting transaction:', err);
                 return res.status(500).send('Internal server error');
             }
@@ -1000,7 +1000,7 @@ app.delete('/api/products/:id', (req, res) => {
             connection.query(deleteSpecsSql, [productId], (err, specResult) => {
                 if (err) {
                                 return connection.rollback(() => {
-                                    connection.release();
+                                    
                         console.error('Error deleting product specs:', err);
                         res.status(500).send('Error deleting associated specifications');
                     });
@@ -1011,14 +1011,14 @@ app.delete('/api/products/:id', (req, res) => {
                 connection.query(deleteProductSql, [productId], (err, productResult) => {
                     if (err) {
                         return connection.rollback(() => {
-                            connection.release();
+                            
                             console.error('Error deleting product:', err);
                             res.status(500).send('Error deleting product');
                         });
                     }
                     if (productResult.rowCount === 0) {
                         return connection.rollback(() => {
-                            connection.release();
+                            
                             res.status(404).send('Product not found');
                         });
                     }
@@ -1026,12 +1026,12 @@ app.delete('/api/products/:id', (req, res) => {
                     connection.commit(err => {
                         if (err) {
                             return connection.rollback(() => {
-                                connection.release();
+                                
                                 console.error('Error committing transaction:', err);
                                 res.status(500).send('Internal server error');
                             });
                         }
-                        connection.release(); // Release the connection back to the pool
+                         // Release the connection back to the pool
                         res.send('Product and its specifications deleted successfully');
                     });
                 });
@@ -1070,7 +1070,7 @@ app.get('/api/products/:productId', (req, res) => {
         ])
         .then(([product, specs]) => {
             if (connection && typeof connection.release === 'function') {
-                connection.release();
+                
             }
 
             if (!product) {
@@ -1098,7 +1098,7 @@ app.get('/api/products/:productId', (req, res) => {
         })
         .catch(queryErr => {
             if (connection && typeof connection.release === 'function') {
-                connection.release();
+                
             }
             console.error('Error fetching product details or specs:', queryErr);
             res.status(500).send('Error fetching product details');
@@ -1465,5 +1465,8 @@ app.delete('/api/inquiries/:id', authenticateToken, (req, res) => {
 });
 
 // Force deployment
-/ /   F i x e d   c o n n e c t i o n   i s s u e  
+/ /   F i x e d   c o n n e c t i o n   i s s u e 
+ 
+ 
+/ /   F i x e d   P o s t g r e S Q L   c o n n e c t i o n  
  
