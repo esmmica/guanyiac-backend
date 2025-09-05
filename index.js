@@ -1041,68 +1041,53 @@ app.delete('/api/products/:id', (req, res) => {
 });
 
 // MODIFIED: Get product by ID (for ProductDetailPage) to include product_features
+// MODIFIED: Get product by ID (for ProductDetailPage) to include product_features
 app.get('/api/products/:productId', (req, res) => {
     const productId = req.params.productId;
 
-    pool.query('SELECT NOW()', (err, connection) => { // MODIFIED: use connection for queries
-        if (err) {
-            console.error('Error getting database connection:', err);
-            return res.status(500).send('Database connection error');
+    const productSql = 'SELECT *, product_features FROM products WHERE id = $1';
+    const specsSql = 'SELECT * FROM product_specs WHERE product_id = $1 ORDER BY id ASC';
+
+    // Use Promise.all to fetch product and specs concurrently
+    Promise.all([
+        new Promise((resolve, reject) => {
+            pool.query(productSql, [productId], (err, productResults) => {
+                if (err) return reject(err);
+                resolve(productResults.rows[0]);
+            });
+        }),
+        new Promise((resolve, reject) => {
+            pool.query(specsSql, [productId], (err, specsResults) => {
+                if (err) return reject(err);
+                resolve(specsResults.rows);
+            });
+        })
+    ])
+    .then(([product, specs]) => {
+        if (!product) {
+            return res.status(404).send('Product not found');
         }
 
-        const productSql = 'SELECT *, product_features FROM products WHERE id = $1';
-        const specsSql = 'SELECT * FROM product_specs WHERE product_id = $1 ORDER BY id ASC';
-
-        // Use Promise.all to fetch product and specs concurrently
-        Promise.all([
-            new Promise((resolve, reject) => {
-                connection.query(productSql, [productId], (err, productResults) => {
-                    if (err) return reject(err);
-                    resolve(productResults.rows[0]);
-                });
-            }),
-            new Promise((resolve, reject) => {
-                connection.query(specsSql, [productId], (err, specsResults) => {
-                    if (err) return reject(err);
-                    resolve(specsResults.rows);
-                });
-            })
-        ])
-        .then(([product, specs]) => {
-            if (connection && typeof connection.release === 'function') {
-                
+        // Ensure product_features is parsed if it's coming as a string
+        if (typeof product.product_features === 'string') {
+            try {
+                product.product_features = JSON.parse(product.product_features);
+            } catch (e) {
+                console.error('Error parsing product_features JSON:', e);
+                product.product_features = []; // Default to empty array on parse error
             }
+        } else if (!product.product_features) {
+            product.product_features = []; // Ensure it's an array even if null
+        }
 
-            if (!product) {
-                return res.status(404).send('Product not found');
-            }
+        // Attach specs to the product object
+        product.product_specs = specs;
 
-            // {{ Ensure product_features is parsed if it's coming as a string }}
-            // The `mysql` package might return JSON columns as strings.
-            // If `product.product_features` is already an object, remove this line.
-            if (typeof product.product_features === 'string') {
-                try {
-                    product.product_features = JSON.parse(product.product_features);
-                } catch (e) {
-                    console.error('Error parsing product_features JSON:', e);
-                    product.product_features = []; // Default to empty array on parse error
-                }
-            } else if (!product.product_features) {
-                product.product_features = []; // Ensure it's an array even if null
-            }
-
-            // Attach specs to the product object
-            product.product_specs = specs;
-
-            res.json(product);
-        })
-        .catch(queryErr => {
-            if (connection && typeof connection.release === 'function') {
-                
-            }
-            console.error('Error fetching product details or specs:', queryErr);
-            res.status(500).send('Error fetching product details');
-        });
+        res.json(product);
+    })
+    .catch(queryErr => {
+        console.error('Error fetching product details or specs:', queryErr);
+        res.status(500).send('Error fetching product details');
     });
 });
 
