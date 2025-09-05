@@ -94,7 +94,7 @@ function isAdmin(req, res, next) {
 
 // NEW: Function to update the 'is_new' status for products
 const updateNewProductStatus = () => {
-    pool.query('SELECT NOW()', (err, connection) => { // MODIFIED: use connection for queries
+    pool.getConnection((err, connection) => {
         if (err) {
             console.error('Error getting connection for updateNewProductStatus:', err);
             return;
@@ -116,8 +116,6 @@ const updateNewProductStatus = () => {
                 }
 
                 // Step 2: Get the 10 most recently added products and set their is_new = 1
-                // Assuming 'id' is auto-incrementing and can be used to determine recency.
-                // If you have a 'created_at' timestamp, it would be better to order by that.
                 const setNewStatusSql = 'UPDATE products SET is_new = 1 WHERE id IN (SELECT id FROM (SELECT id FROM products ORDER BY id DESC LIMIT 10) AS subquery)';
                 connection.query(setNewStatusSql, (setErr) => {
                     if (setErr) {
